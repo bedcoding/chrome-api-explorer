@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>API Explorer</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header>
+    <div class="title">API Explorer</div>
+    <button id="favOnlyToggle" class="fav-only-btn" data-tip="즐겨찾기(★)만 보기 / 전체 보기 전환">★ 즐겨찾기만</button>
+  </header>
+
+  <section id="controlBar">
+    <label class="toggle">
+      <input type="checkbox" id="captureToggle">
+      <span class="toggle-label">감지 <span id="captureStateLabel">OFF</span></span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="groupToggle">
+      <span>페이지별 그룹화</span>
+    </label>
+    <button id="optionsBtn" class="btn-mini" data-tip="설정">⚙</button>
+  </section>
+
+  <section id="whitelistBar">
+    <span class="field-label" data-tip="수집할 도메인 화이트리스트 (콤마로 구분, 빈 칸 = 전체)">도메인</span>
+    <input id="whitelistInput" type="text" placeholder="example.com, api.example.com (빈칸=전체)" data-tip="콤마로 구분. suffix 매칭. 빈 칸이면 모든 도메인 수집">
+  </section>
+
+  <section id="filterBar">
+    <span class="field-label" data-tip="현재 화면에서 검색 (URL · 메모)">검색</span>
+    <input id="filterInput" type="text" placeholder="URL이나 메모로 찾기 (정규식 가능)" data-tip="URL과 메모 내용 모두에서 검색. 빈 칸이면 전체 표시.">
+  </section>
+
+  <section id="originBar">
+    <span class="field-label" data-tip="수집된 origin 중 보고 싶은 그룹 선택">그룹</span>
+    <select id="originSelect" data-tip="origin 그룹 선택"></select>
+    <button id="purgeNoiseBtn" class="btn-mini" data-tip="도메인 목록 밖 그룹 일괄 삭제">노이즈</button>
+    <button id="clearOriginBtn" class="btn-mini danger" data-tip="이 그룹의 캡쳐 모두 삭제">⌫</button>
+  </section>
+
+  <main>
+    <div id="favAddBar">
+      <input id="favAddUrl" type="text" placeholder="URL 직접 추가 (대표 URL 만들기 등)">
+      <button id="favAddBtn" data-tip="입력한 URL을 즐겨찾기에 추가">★ 추가</button>
+    </div>
+    <ul id="capturedList" class="list"></ul>
+  </main>
+
+  <footer>
+    <button id="exportBtn" data-tip="★ 즐겨찾기한 것만 JSON으로 내보내기">★ Export</button>
+    <button id="exportAllBtn" data-tip="현재 도메인의 모든 API를 JSON으로 내보내기 (즐겨찾기 무관)">전체 Export</button>
+    <span id="counter" class="counter"></span>
+  </footer>
+
+  <template id="callRowTpl">
+    <li class="row">
+      <div class="row-top">
+        <button class="method" data-tip="클릭하면 즐겨찾기"><span class="star-mark">☆</span><span class="method-text">GET</span></button>
+        <button class="replay" data-tip="헤더/쿠키 빼고 재호출">검증</button>
+        <span class="url"></span>
+        <button class="toggle-note">✎</button>
+        <span class="meta-verdict">
+          <span class="meta"></span>
+          <span class="verdict"></span>
+        </span>
+        <span class="status"></span>
+      </div>
+      <div class="row-bottom" hidden>
+        <input class="note" type="text" placeholder="이 API 전용 메모">
+        <a class="delete-custom" href="#" hidden>🗑 URL 삭제</a>
+      </div>
+    </li>
+  </template>
+
+  <template id="groupHeaderTpl">
+    <li class="group-header">
+      <span class="group-toggle" data-tip="접기/펼치기"></span>
+      <span class="group-label"></span>
+      <input class="group-note" type="text" placeholder="이 페이지의 용도">
+      <span class="group-count"></span>
+    </li>
+  </template>
+
+  <div id="exportModal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span id="exportModalTitle">JSON 미리보기</span>
+        <button id="exportModalClose" class="btn-mini" data-tip="닫기">✕</button>
+      </div>
+      <pre id="exportPreview" class="modal-preview"></pre>
+      <div class="modal-footer">
+        <span id="exportSummary" class="modal-summary"></span>
+        <button id="exportCopyBtn">클립보드 복사</button>
+        <button id="exportDownloadBtn" class="primary">파일 다운로드</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

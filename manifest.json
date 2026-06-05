@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "API Explorer",
+  "version": "0.1.0",
+  "description": "현재 페이지의 GET API 호출을 감지해 헬스체크 모니터링 후보로 큐레이션",
+  "minimum_chrome_version": "120",
+  "action": {
+    "default_title": "API Explorer (사이드패널 열기)"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "options_page": "options/options.html",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": ["webRequest", "storage", "downloads", "tabs", "sidePanel"],
+  "host_permissions": ["<all_urls>"]
+}

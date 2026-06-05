@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>API Explorer 설정</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>API Explorer 설정</h1>
+
+    <section>
+      <h2>수집할 도메인</h2>
+      <p class="hint">
+        한 줄에 하나씩 입력. 비어있으면 <b>모든 도메인</b> 캡쳐. 항목은 suffix 매칭이라
+        <code>example.com</code> 적으면 <code>www.example.com</code>, <code>api.example.com</code> 둘 다 통과.
+      </p>
+      <textarea id="domainsInput" rows="6" placeholder="example.com&#10;api.example.org"></textarea>
+      <div class="actions">
+        <button id="saveDomainsBtn">저장</button>
+        <span id="saveDomainsMsg" class="msg"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>저장된 데이터</h2>
+      <p class="hint">
+        캡쳐: <span id="captureCount">0</span> 도메인 / <span id="apiCount">0</span> API ·
+        즐겨찾기: <span id="favCount">0</span> 건
+      </p>
+      <div class="actions">
+        <button id="exportBtn">즐겨찾기 JSON Export</button>
+        <button id="clearCapturesBtn" class="danger">캡쳐 전체 삭제</button>
+        <button id="clearFavBtn" class="danger">즐겨찾기 전체 삭제</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>안내</h2>
+      <ul class="hint">
+        <li>이 확장은 <b>GET 요청만</b> 캡쳐합니다 (XHR/fetch). POST/PUT은 무시.</li>
+        <li>응답 body는 캡쳐하지 않습니다. DevTools를 사용하세요.</li>
+        <li>"검증" 버튼은 헤더/쿠키를 모두 제거하고 재호출해 200/401/403 으로 모니터링 가능성을 판정합니다.</li>
+        <li>캡쳐는 <code>chrome.storage.local</code> 에 영속 저장됩니다. 자동 삭제 없음 — 필요시 위에서 수동 삭제.</li>
+      </ul>
+    </section>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
