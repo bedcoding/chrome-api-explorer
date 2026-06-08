@@ -59,8 +59,10 @@ const LAST_ORIGIN_KEY = 'lastSelectedOrigin_v1';
 const GROUP_BY_PAGE_KEY = 'groupByPage_v1';
 const COLLAPSED_GROUPS_KEY = 'collapsedGroups_v1'; // { [origin]: [page, ...] }
 const FAV_ONLY_KEY = 'favOnly_v1';
+const PAGE_ORDER_KEY = 'pageOrder_v1'; // { [origin]: [page, ...] } — 사용자 지정 순서
 
 let collapsedGroups = {}; // 현재 origin의 접힌 페이지 Set
+let pageOrder = {}; // { [origin]: [page, ...] } — 사용자 지정 페이지 그룹 순서
 
 // 메모/검색 input에 포커스가 있을 때 리렌더가 일어나면 input 노드가 교체돼
 // 포커스가 사라진다. 포커스 중에는 리렌더를 큐잉했다가 blur 시 1회 실행한다.
@@ -99,9 +101,10 @@ function mergeBackup(current, incoming) {
 }
 
 function isTypingInEditableInput() {
+  // 메모 input들만 보호 대상. 검색/화이트리스트는 입력 즉시 반영이 사용자 기대.
   const a = document.activeElement;
   if (!a) return false;
-  return a.matches?.('.note, .group-note, #filterInput, #whitelistInput, #favAddUrl');
+  return a.matches?.('.note, .group-note');
 }
 
 // 메모 펼침 상태 영속화 — 리렌더 후에도 어느 행이 펼쳐져 있었는지 복원.
@@ -115,11 +118,12 @@ let suppressNextCustomUrlsChange = false;
 
 async function init() {
   // 마지막 선택 도메인 복원 — 활성 탭 origin보다 우선
-  const stored = await chrome.storage.local.get([LAST_ORIGIN_KEY, GROUP_BY_PAGE_KEY, COLLAPSED_GROUPS_KEY, FAV_ONLY_KEY]);
+  const stored = await chrome.storage.local.get([LAST_ORIGIN_KEY, GROUP_BY_PAGE_KEY, COLLAPSED_GROUPS_KEY, FAV_ONLY_KEY, PAGE_ORDER_KEY]);
   if (stored[LAST_ORIGIN_KEY]) selectedOrigin = stored[LAST_ORIGIN_KEY];
   groupByPage = !!stored[GROUP_BY_PAGE_KEY];
   els.groupToggle.checked = groupByPage;
   collapsedGroups = stored[COLLAPSED_GROUPS_KEY] || {};
+  pageOrder = stored[PAGE_ORDER_KEY] || {};
   favOnly = !!stored[FAV_ONLY_KEY];
   els.favOnlyToggle.classList.toggle('on', favOnly);
 
@@ -624,6 +628,58 @@ function renderRows(calls, favoritesOnly = false) {
   }
 }
 
+// 드래그 중인 페이지 그룹 추적
+let draggingPage = null;
+
+function attachGroupDragHandlers(header, page) {
+  header.addEventListener('dragstart', (e) => {
+    draggingPage = page;
+    header.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', page); // Firefox 호환
+  });
+  header.addEventListener('dragend', () => {
+    draggingPage = null;
+    header.classList.remove('dragging');
+    document.querySelectorAll('.group-header.drop-above, .group-header.drop-below')
+      .forEach((el) => el.classList.remove('drop-above', 'drop-below'));
+    // 드래그 직후 따라오는 click 이벤트가 토글을 trigger하지 않도록 잠깐 무시
+    header.dataset.dragJustEnded = '1';
+    setTimeout(() => { delete header.dataset.dragJustEnded; }, 50);
+  });
+  header.addEventListener('dragover', (e) => {
+    if (!draggingPage || draggingPage === page) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = header.getBoundingClientRect();
+    const above = e.clientY < rect.top + rect.height / 2;
+    header.classList.toggle('drop-above', above);
+    header.classList.toggle('drop-below', !above);
+  });
+  header.addEventListener('dragleave', () => {
+    header.classList.remove('drop-above', 'drop-below');
+  });
+  header.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const src = draggingPage;
+    header.classList.remove('drop-above', 'drop-below');
+    if (!src || src === page) return;
+    // 현재 그려진 그룹 헤더들의 페이지 목록을 화면 순서대로 수집
+    const currentOrder = [...els.capturedList.querySelectorAll('li.group-header')]
+      .map((h) => h.dataset.page)
+      .filter((p) => p && p !== '(페이지 불명)' && p !== '(직접 추가)');
+    const without = currentOrder.filter((p) => p !== src);
+    const targetIdx = without.indexOf(page);
+    const rect = header.getBoundingClientRect();
+    const above = e.clientY < rect.top + rect.height / 2;
+    const insertAt = above ? targetIdx : targetIdx + 1;
+    without.splice(insertAt, 0, src);
+    pageOrder[selectedOrigin] = without;
+    await chrome.storage.local.set({ [PAGE_ORDER_KEY]: pageOrder });
+    renderCurrent();
+  });
+}
+
 function renderGrouped(calls) {
   // 페이지별로 분류. 한 call이 여러 페이지에 속하면 모든 그룹에 나타남.
   const groups = new Map(); // page → Call[]
@@ -637,14 +693,31 @@ function renderGrouped(calls) {
     }
   }
   const collapsedSet = new Set(collapsedGroups[selectedOrigin] || []);
-  const pages = [...groups.keys()].sort();
+  // 페이지 순서: 사용자 지정 순서 우선, 그 외는 알파벳순으로 뒤에
+  const allPages = [...groups.keys()];
+  const savedOrder = pageOrder[selectedOrigin] || [];
+  const orderedPages = [];
+  const seen = new Set();
+  for (const p of savedOrder) {
+    if (groups.has(p) && !seen.has(p)) { orderedPages.push(p); seen.add(p); }
+  }
+  for (const p of allPages.sort()) {
+    if (!seen.has(p)) { orderedPages.push(p); seen.add(p); }
+  }
+  const pages = orderedPages;
   for (const page of pages) {
     const headerNode = els.groupHeaderTpl.content.cloneNode(true);
     const header = headerNode.querySelector('li');
+    header.dataset.page = page;
     header.querySelector('.group-label').textContent = page;
     header.querySelector('.group-count').textContent = `${groups.get(page).length} 개`;
     const isCollapsed = collapsedSet.has(page);
     if (isCollapsed) header.classList.add('collapsed');
+    // 드래그로 그룹 순서 조정. (페이지 불명)/(직접 추가)는 가상 그룹이라 제외.
+    if (page !== '(페이지 불명)' && page !== '(직접 추가)') {
+      header.draggable = true;
+      attachGroupDragHandlers(header, page);
+    }
 
     const noteEl = header.querySelector('.group-note');
     if (page === '(페이지 불명)' || page === '(직접 추가)') {
@@ -664,8 +737,29 @@ function renderGrouped(calls) {
       noteEl.addEventListener('blur', flushPendingRender);
     }
 
+    // 🗑 페이지 기록 비우기: (페이지 불명)/(직접 추가) 그룹에는 무의미하니 제거
+    const purgeBtn = header.querySelector('.group-purge');
+    if (purgeBtn) {
+      if (page === '(페이지 불명)' || page === '(직접 추가)') {
+        purgeBtn.remove();
+      } else {
+        purgeBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const count = groups.get(page).length;
+          if (!confirm(`'${page}' 그룹의 ${count}개 항목을 비웁니다.\n다른 페이지에서도 호출되는 API는 그 페이지 그룹에 남습니다.\n계속할까요?`)) return;
+          await chrome.runtime.sendMessage({
+            type: 'removePageFromOrigin',
+            origin: selectedOrigin,
+            page,
+          });
+          // storage onChanged 리스너가 자동으로 리렌더함
+        });
+      }
+    }
+
     // 헤더 클릭 → 접기/펼치기 토글
     header.addEventListener('click', () => {
+      if (header.dataset.dragJustEnded) return; // 드래그 직후의 click은 무시
       const nowCollapsed = !header.classList.contains('collapsed');
       header.classList.toggle('collapsed', nowCollapsed);
       // 다음 그룹 헤더 전까지의 .row 들 토글
@@ -717,7 +811,11 @@ function appendCallRow(call) {
   const metaEl = li.querySelector('.meta');
   const metaParts = [`${call.lastDurationMs ?? 0}ms`];
   metaParts.push(`${call.hitCount ?? 1}회`);
+  // 여러 페이지에서 호출되는 API는 페이지 수 표시 (1개 또는 없으면 생략)
+  const pageCount = Array.isArray(call.pages) ? call.pages.length : 0;
+  if (pageCount >= 2) metaParts.push(`${pageCount}페이지`);
   metaEl.textContent = metaParts.join('·');
+  if (pageCount >= 2) metaEl.classList.add('multi-page');
 
   const verdictEl = li.querySelector('.verdict');
   const replayBtn = li.querySelector('.replay');

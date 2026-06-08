@@ -14,7 +14,7 @@ import {
   hostnameOf,
   pathOf,
 } from '../shared/settings.js';
-import { recordCall, getCapturesByOrigin, getAllCaptures, clearOrigin, clearAll, updateCallNote, updateCallVerdict, removeCall } from '../shared/captures.js';
+import { recordCall, getCapturesByOrigin, getAllCaptures, clearOrigin, clearAll, updateCallNote, updateCallVerdict, removeCall, removePageFromOrigin } from '../shared/captures.js';
 
 // 아이콘 클릭 → 사이드패널 열기
 chrome.sidePanel
@@ -155,6 +155,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         case 'clearOrigin': {
           await clearOrigin(msg.origin);
+          sendResponse({ ok: true });
+          return;
+        }
+        case 'removePageFromOrigin': {
+          await removePageFromOrigin(msg.origin, msg.page);
           sendResponse({ ok: true });
           return;
         }

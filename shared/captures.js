@@ -111,6 +111,27 @@ export async function removeCall(origin, method, url) {
   await chrome.storage.local.set({ [KEY]: cache });
 }
 
+// 특정 origin의 특정 페이지에 묶인 호출들을 정리.
+// - 해당 페이지가 유일한 pages였던 call은 통째로 삭제
+// - 다른 페이지에서도 호출되던 call은 pages 배열에서 그 페이지만 제거
+export async function removePageFromOrigin(origin, page) {
+  await ensureLoaded();
+  const bucket = cache[origin];
+  if (!bucket) return;
+  for (const key of Object.keys(bucket)) {
+    const call = bucket[key];
+    if (!Array.isArray(call.pages) || !call.pages.includes(page)) continue;
+    const remaining = call.pages.filter((p) => p !== page);
+    if (remaining.length === 0) {
+      delete bucket[key];
+    } else {
+      call.pages = remaining;
+    }
+  }
+  if (Object.keys(bucket).length === 0) delete cache[origin];
+  await chrome.storage.local.set({ [KEY]: cache });
+}
+
 export async function clearOrigin(origin) {
   await ensureLoaded();
   delete cache[origin];
