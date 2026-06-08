@@ -65,6 +65,15 @@ function isTypingInEditableInput() {
   return a.matches?.('.note, .group-note, #filterInput, #whitelistInput, #favAddUrl');
 }
 
+// 메모 펼침 상태 영속화 — 리렌더 후에도 어느 행이 펼쳐져 있었는지 복원.
+// key = `${method} ${url}` (call key와 동일 규칙)
+const expandedRows = new Set();
+
+// 자기 자신이 일으킨 메모 저장으로 인한 storage onChanged 리렌더 억제.
+// updateNote 호출 직전 true로 세팅하고, onChanged 리스너에서 captures_v1 변경 1회를 무시한다.
+let suppressNextCapturesChange = false;
+let suppressNextCustomUrlsChange = false;
+
 async function init() {
   // 마지막 선택 도메인 복원 — 활성 탭 origin보다 우선
   const stored = await chrome.storage.local.get([LAST_ORIGIN_KEY, GROUP_BY_PAGE_KEY, COLLAPSED_GROUPS_KEY, FAV_ONLY_KEY]);
@@ -175,21 +184,26 @@ function bindEvents() {
     for (const li of els.capturedList.querySelectorAll('li.row')) {
       const rb = li.querySelector('.row-bottom');
       const noteEl = li.querySelector('.note');
-      if (rb) fn(rb, noteEl);
+      const key = li.dataset.rowKey;
+      if (rb) fn(rb, noteEl, key);
     }
   };
 
   els.notesExpandFilledBtn.addEventListener('click', () => {
     els.notesMenu.classList.remove('open');
-    forEachRow((rb, noteEl) => { rb.hidden = !(noteEl && noteEl.value.trim()); });
+    forEachRow((rb, noteEl, key) => {
+      const expand = !!(noteEl && noteEl.value.trim());
+      rb.hidden = !expand;
+      if (key) (expand ? expandedRows.add(key) : expandedRows.delete(key));
+    });
   });
   els.notesExpandAllBtn.addEventListener('click', () => {
     els.notesMenu.classList.remove('open');
-    forEachRow((rb) => { rb.hidden = false; });
+    forEachRow((rb, _n, key) => { rb.hidden = false; if (key) expandedRows.add(key); });
   });
   els.notesCollapseAllBtn.addEventListener('click', () => {
     els.notesMenu.classList.remove('open');
-    forEachRow((rb) => { rb.hidden = true; });
+    forEachRow((rb, _n, key) => { rb.hidden = true; if (key) expandedRows.delete(key); });
   });
 
   els.exportAllBtn.addEventListener('click', () => {
@@ -301,10 +315,15 @@ function startWatchers() {
     if (area !== 'local') return;
     if ('captures_v1' in changes) {
       allCaptures = changes.captures_v1.newValue ?? {};
-      populateOriginSelect();
-      pickCurrentCalls();
-      renderCurrent();
-      updateCounter();
+      // 자기가 일으킨 메모 저장은 본 패널에 영향 없으니 리렌더 스킵
+      if (suppressNextCapturesChange) {
+        suppressNextCapturesChange = false;
+      } else {
+        populateOriginSelect();
+        pickCurrentCalls();
+        renderCurrent();
+        updateCounter();
+      }
     }
     if ('favorites_v1' in changes) {
       favorites = changes.favorites_v1.newValue ?? [];
@@ -314,7 +333,13 @@ function startWatchers() {
       refreshWhitelistView();
     }
     if ('customUrls_v1' in changes) {
-      refreshCustomUrls().then(renderCurrent);
+      if (suppressNextCustomUrlsChange) {
+        suppressNextCustomUrlsChange = false;
+        // customUrls 캐시는 갱신해야 함 (다음 렌더 시 일관성)
+        refreshCustomUrls();
+      } else {
+        refreshCustomUrls().then(renderCurrent);
+      }
     }
   });
 }
@@ -554,6 +579,7 @@ function renderGrouped(calls) {
 function appendCallRow(call) {
   const node = els.callRowTpl.content.cloneNode(true);
   const li = node.querySelector('li');
+  li.dataset.rowKey = `${call.method} ${call.url}`;
   const methodEl = li.querySelector('.method');
   li.querySelector('.method-text').textContent = call.method;
   const urlEl = li.querySelector('.url');
@@ -630,6 +656,10 @@ function appendCallRow(call) {
   // 직접 추가 행은 같은 패널에서 삭제 링크도 노출.
   const rowBottom = li.querySelector('.row-bottom');
   const toggleNoteBtn = li.querySelector('.toggle-note');
+  const rowKey = `${call.method} ${call.url}`;
+  // 이전에 펼쳐져 있던 행이면 리렌더 후에도 펼친 상태 복원
+  if (expandedRows.has(rowKey)) rowBottom.hidden = false;
+
   const updateToggleVisual = () => {
     const hasNote = !!noteEl.value.trim();
     toggleNoteBtn.classList.toggle('has-note', hasNote);
@@ -637,7 +667,8 @@ function appendCallRow(call) {
   updateToggleVisual();
   toggleNoteBtn.addEventListener('click', () => {
     rowBottom.hidden = !rowBottom.hidden;
-    if (!rowBottom.hidden) noteEl.focus();
+    if (rowBottom.hidden) expandedRows.delete(rowKey);
+    else { expandedRows.add(rowKey); noteEl.focus(); }
   });
   // 포커스가 빠지는 시점에 보류된 리렌더 처리
   noteEl.addEventListener('blur', flushPendingRender);
@@ -646,10 +677,12 @@ function appendCallRow(call) {
     updateToggleVisual();
     clearTimeout(noteDebounce);
     noteDebounce = setTimeout(async () => {
+      // 자기가 일으킨 storage 변경의 리렌더는 onChanged에서 1회 무시
       if (call.isCustom) {
-        // 직접 추가 항목은 customUrls 저장소에 저장
+        suppressNextCustomUrlsChange = true;
         await updateCustomUrlNote(selectedOrigin, call.url, noteEl.value);
       } else {
+        suppressNextCapturesChange = true;
         await chrome.runtime.sendMessage({
           type: 'updateNote',
           origin: selectedOrigin,
