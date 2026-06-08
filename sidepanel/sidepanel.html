@@ -53,10 +53,17 @@
       <button id="exportBtn" class="export-trigger">Export ▾</button>
       <div class="export-popup" role="menu">
         <button id="exportFavBtn" class="export-item" role="menuitem">★ 즐겨찾기만</button>
-        <button id="exportAllBtn" class="export-item" role="menuitem">전체</button>
+        <button id="exportAllBtn" class="export-item" role="menuitem">⋯ 전체</button>
       </div>
     </div>
-    <button id="toggleAllNotesBtn" data-tip="모든 행의 메모를 한 번에 펼치기/접기">메모 펼치기</button>
+    <div id="notesMenu" class="export-menu">
+      <button id="notesBtn" class="export-trigger">메모 ▾</button>
+      <div class="export-popup" role="menu">
+        <button id="notesExpandFilledBtn" class="export-item" role="menuitem">이미 있는 것만 펼치기</button>
+        <button id="notesExpandAllBtn" class="export-item" role="menuitem">전부 펼치기</button>
+        <button id="notesCollapseAllBtn" class="export-item" role="menuitem">전부 접기</button>
+      </div>
+    </div>
     <span id="counter" class="counter"></span>
   </footer>
 

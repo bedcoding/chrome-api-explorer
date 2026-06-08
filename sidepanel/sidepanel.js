@@ -12,7 +12,11 @@ const els = {
   exportBtn: document.getElementById('exportBtn'),
   exportFavBtn: document.getElementById('exportFavBtn'),
   exportAllBtn: document.getElementById('exportAllBtn'),
-  toggleAllNotesBtn: document.getElementById('toggleAllNotesBtn'),
+  notesMenu: document.getElementById('notesMenu'),
+  notesBtn: document.getElementById('notesBtn'),
+  notesExpandFilledBtn: document.getElementById('notesExpandFilledBtn'),
+  notesExpandAllBtn: document.getElementById('notesExpandAllBtn'),
+  notesCollapseAllBtn: document.getElementById('notesCollapseAllBtn'),
   favAddUrl: document.getElementById('favAddUrl'),
   favAddBtn: document.getElementById('favAddBtn'),
   exportModal: document.getElementById('exportModal'),
@@ -133,13 +137,16 @@ function bindEvents() {
     }, 400);
   });
 
-  // Export 드롭업: 트리거 클릭으로 토글, 메뉴 바깥 클릭으로 닫기
+  // Export/메모 드롭업: 트리거 클릭으로 토글, 메뉴 바깥 클릭으로 닫기.
+  // 두 메뉴 중 하나를 열면 다른 하나는 닫는다.
   els.exportBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    els.notesMenu.classList.remove('open');
     els.exportMenu.classList.toggle('open');
   });
   document.addEventListener('click', (e) => {
     if (!els.exportMenu.contains(e.target)) els.exportMenu.classList.remove('open');
+    if (els.notesMenu && !els.notesMenu.contains(e.target)) els.notesMenu.classList.remove('open');
   });
 
   els.exportFavBtn.addEventListener('click', () => {
@@ -157,22 +164,32 @@ function bindEvents() {
     openExportModal('★ 즐겨찾기 Export', endpoints, 'api-explorer-favorites');
   });
 
-  // 메모 일괄 토글: 펼침 시 메모 내용이 있는 행만 펼치고, 접힘 시 전부 접는다.
-  let allNotesExpanded = false;
-  els.toggleAllNotesBtn.addEventListener('click', () => {
-    allNotesExpanded = !allNotesExpanded;
-    els.toggleAllNotesBtn.textContent = allNotesExpanded ? '메모 접기' : '메모 펼치기';
+  // 메모 드롭업 트리거 (Export와 같은 패턴, 하나 열면 다른 하나 닫음)
+  els.notesBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    els.exportMenu.classList.remove('open');
+    els.notesMenu.classList.toggle('open');
+  });
+
+  const forEachRow = (fn) => {
     for (const li of els.capturedList.querySelectorAll('li.row')) {
       const rb = li.querySelector('.row-bottom');
       const noteEl = li.querySelector('.note');
-      if (!rb) continue;
-      if (allNotesExpanded) {
-        // 메모 내용이 있는 행만 펼침
-        rb.hidden = !(noteEl && noteEl.value.trim());
-      } else {
-        rb.hidden = true;
-      }
+      if (rb) fn(rb, noteEl);
     }
+  };
+
+  els.notesExpandFilledBtn.addEventListener('click', () => {
+    els.notesMenu.classList.remove('open');
+    forEachRow((rb, noteEl) => { rb.hidden = !(noteEl && noteEl.value.trim()); });
+  });
+  els.notesExpandAllBtn.addEventListener('click', () => {
+    els.notesMenu.classList.remove('open');
+    forEachRow((rb) => { rb.hidden = false; });
+  });
+  els.notesCollapseAllBtn.addEventListener('click', () => {
+    els.notesMenu.classList.remove('open');
+    forEachRow((rb) => { rb.hidden = true; });
   });
 
   els.exportAllBtn.addEventListener('click', () => {
