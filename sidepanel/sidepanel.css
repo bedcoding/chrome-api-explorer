@@ -343,7 +343,12 @@ main {
   background: #e5e7eb;
   color: #374151;
   flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  transition: filter 120ms ease, transform 120ms ease;
 }
+.status:hover { filter: brightness(0.93); transform: translateY(-1px); }
+.status:active { filter: brightness(0.85); transform: translateY(0); }
 .status.ok { background: #dcfce7; color: #166534; }
 .status.err { background: #fee2e2; color: #991b1b; }
 .status.auth { background: #fef3c7; color: #92400e; }
@@ -480,6 +485,50 @@ footer button:hover { background: #f3f4f6; }
   color: #6b7280;
   font-size: 11px;
 }
+
+/* Export 드롭업 메뉴 */
+.export-menu {
+  position: relative;
+  display: inline-block;
+}
+.export-popup {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 130px;
+  z-index: 10;
+  /* 평소엔 숨김. open 또는 hover 시 페이드인, 사라질 땐 페이드아웃. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 180ms;
+}
+.export-menu.open .export-popup,
+.export-menu:hover .export-popup {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease, visibility 0s linear 0s;
+}
+.export-item {
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.export-item:hover { background: #f3f4f6; }
 
 .empty {
   padding: 20px;

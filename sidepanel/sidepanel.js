@@ -8,8 +8,11 @@ const els = {
   favOnlyToggle: document.getElementById('favOnlyToggle'),
   capturedList: document.getElementById('capturedList'),
   filterInput: document.getElementById('filterInput'),
+  exportMenu: document.getElementById('exportMenu'),
   exportBtn: document.getElementById('exportBtn'),
+  exportFavBtn: document.getElementById('exportFavBtn'),
   exportAllBtn: document.getElementById('exportAllBtn'),
+  toggleAllNotesBtn: document.getElementById('toggleAllNotesBtn'),
   favAddUrl: document.getElementById('favAddUrl'),
   favAddBtn: document.getElementById('favAddBtn'),
   exportModal: document.getElementById('exportModal'),
@@ -48,6 +51,15 @@ const COLLAPSED_GROUPS_KEY = 'collapsedGroups_v1'; // { [origin]: [page, ...] }
 const FAV_ONLY_KEY = 'favOnly_v1';
 
 let collapsedGroups = {}; // 현재 origin의 접힌 페이지 Set
+
+// 메모/검색 input에 포커스가 있을 때 리렌더가 일어나면 input 노드가 교체돼
+// 포커스가 사라진다. 포커스 중에는 리렌더를 큐잉했다가 blur 시 1회 실행한다.
+let pendingRender = false;
+function isTypingInEditableInput() {
+  const a = document.activeElement;
+  if (!a) return false;
+  return a.matches?.('.note, .group-note, #filterInput, #whitelistInput, #favAddUrl');
+}
 
 async function init() {
   // 마지막 선택 도메인 복원 — 활성 탭 origin보다 우선
@@ -91,6 +103,11 @@ async function syncActiveTab() {
 }
 
 function bindEvents() {
+  // 모든 보호 대상 input의 blur 시점에 보류된 리렌더 처리
+  els.filterInput.addEventListener('blur', flushPendingRender);
+  els.whitelistInput.addEventListener('blur', flushPendingRender);
+  els.favAddUrl?.addEventListener('blur', flushPendingRender);
+
   els.favOnlyToggle.addEventListener('click', async () => {
     favOnly = !favOnly;
     els.favOnlyToggle.classList.toggle('on', favOnly);
@@ -116,9 +133,19 @@ function bindEvents() {
     }, 400);
   });
 
-  els.exportBtn.addEventListener('click', () => {
+  // Export 드롭업: 트리거 클릭으로 토글, 메뉴 바깥 클릭으로 닫기
+  els.exportBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    els.exportMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (!els.exportMenu.contains(e.target)) els.exportMenu.classList.remove('open');
+  });
+
+  els.exportFavBtn.addEventListener('click', () => {
+    els.exportMenu.classList.remove('open');
     if (favorites.length === 0) {
-      alert('즐겨찾기가 비어있습니다.\nGET 배지(☆)를 클릭해 추가하거나 "전체 Export" 버튼을 사용하세요.');
+      alert('즐겨찾기가 비어있습니다.\nGET 배지(☆)를 클릭해 추가하거나 "전체"로 내보내세요.');
       return;
     }
     const endpoints = favorites.map((f) => ({
@@ -130,7 +157,26 @@ function bindEvents() {
     openExportModal('★ 즐겨찾기 Export', endpoints, 'api-explorer-favorites');
   });
 
+  // 메모 일괄 토글: 펼침 시 메모 내용이 있는 행만 펼치고, 접힘 시 전부 접는다.
+  let allNotesExpanded = false;
+  els.toggleAllNotesBtn.addEventListener('click', () => {
+    allNotesExpanded = !allNotesExpanded;
+    els.toggleAllNotesBtn.textContent = allNotesExpanded ? '메모 접기' : '메모 펼치기';
+    for (const li of els.capturedList.querySelectorAll('li.row')) {
+      const rb = li.querySelector('.row-bottom');
+      const noteEl = li.querySelector('.note');
+      if (!rb) continue;
+      if (allNotesExpanded) {
+        // 메모 내용이 있는 행만 펼침
+        rb.hidden = !(noteEl && noteEl.value.trim());
+      } else {
+        rb.hidden = true;
+      }
+    }
+  });
+
   els.exportAllBtn.addEventListener('click', () => {
+    els.exportMenu.classList.remove('open');
     if (currentCalls.length === 0) {
       alert('현재 선택된 도메인에 캡쳐된 API가 없습니다.');
       return;
@@ -325,6 +371,21 @@ function updateCounter() {
 }
 
 function renderCurrent() {
+  // 사용자가 메모/검색 input에 글자를 입력 중이면 리렌더를 보류.
+  // 포커스가 빠지는 시점(input의 blur 핸들러)에서 한 번만 실행한다.
+  if (isTypingInEditableInput()) {
+    pendingRender = true;
+    return;
+  }
+  pendingRender = false;
+  renderCurrentNow();
+}
+
+function flushPendingRender() {
+  if (pendingRender) renderCurrent();
+}
+
+function renderCurrentNow() {
   // 캡쳐 + 사용자 직접 추가를 합쳐서 렌더 (직접 추가는 isCustom 표식)
   const customCalls = customUrls.map((c) => ({
     method: c.method,
@@ -335,9 +396,16 @@ function renderCurrent() {
     lastSizeBytes: 0,
     hitCount: 0,
     note: c.note || '',
+    addedAt: c.addedAt ?? 0,
     isCustom: true,
   }));
-  const combined = [...currentCalls, ...customCalls];
+  // 추가된 순서대로 위→아래로 쌓이도록 정렬 (오래된 것이 위, 최신이 아래).
+  // 캡쳐는 firstSeenAt, 직접 추가는 addedAt(없으면 0) 기준.
+  const combined = [...currentCalls, ...customCalls].sort((a, b) => {
+    const ta = a.firstSeenAt ?? a.addedAt ?? 0;
+    const tb = b.firstSeenAt ?? b.addedAt ?? 0;
+    return ta - tb;
+  });
 
   if (!favOnly) {
     renderRows(combined);
@@ -432,6 +500,8 @@ function renderGrouped(calls) {
       });
       // 메모 입력 클릭은 토글 이벤트 안 받게
       noteEl.addEventListener('click', (e) => e.stopPropagation());
+      // 포커스가 빠지는 시점에 보류된 리렌더 처리
+      noteEl.addEventListener('blur', flushPendingRender);
     }
 
     // 헤더 클릭 → 접기/펼치기 토글
@@ -477,6 +547,12 @@ function appendCallRow(call) {
   if (call.lastStatus >= 200 && call.lastStatus < 300) statusEl.classList.add('ok');
   else if (call.lastStatus === 401 || call.lastStatus === 403) statusEl.classList.add('auth');
   else statusEl.classList.add('err');
+  // 상태 배지 클릭 → 해당 URL을 새 탭에서 열어 응답 확인
+  statusEl.dataset.tip = '새 탭에서 열기';
+  statusEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    chrome.tabs.create({ url: call.url });
+  });
   const metaEl = li.querySelector('.meta');
   const metaParts = [`${call.lastDurationMs ?? 0}ms`];
   metaParts.push(`${call.hitCount ?? 1}회`);
@@ -532,7 +608,8 @@ function appendCallRow(call) {
   const noteEl = li.querySelector('.note');
   noteEl.value = call.note || '';
 
-  // 메모 토글 — 평소엔 숨김. 메모 내용이 있거나 사용자가 ✎ 누르면 펼침.
+  // 메모 토글 — 평소엔 숨김. 사용자가 ✎ 누를 때만 펼침.
+  // 메모 내용 유무는 ✎ 버튼의 has-note 강조로만 표시 (자동으로 펼치지 않음).
   // 직접 추가 행은 같은 패널에서 삭제 링크도 노출.
   const rowBottom = li.querySelector('.row-bottom');
   const toggleNoteBtn = li.querySelector('.toggle-note');
@@ -540,14 +617,13 @@ function appendCallRow(call) {
     const hasNote = !!noteEl.value.trim();
     toggleNoteBtn.classList.toggle('has-note', hasNote);
   };
-  if (noteEl.value.trim()) {
-    rowBottom.hidden = false;
-  }
   updateToggleVisual();
   toggleNoteBtn.addEventListener('click', () => {
     rowBottom.hidden = !rowBottom.hidden;
     if (!rowBottom.hidden) noteEl.focus();
   });
+  // 포커스가 빠지는 시점에 보류된 리렌더 처리
+  noteEl.addEventListener('blur', flushPendingRender);
   let noteDebounce = null;
   noteEl.addEventListener('input', () => {
     updateToggleVisual();
@@ -603,7 +679,7 @@ function appendCallRow(call) {
   const updateFavVisual = (favored) => {
     methodEl.classList.toggle('favorited', favored);
     starMark.textContent = favored ? '★' : '☆';
-    methodEl.dataset.tip = favored ? '클릭하면 즐겨찾기 해제' : '클릭하면 즐겨찾기';
+    methodEl.dataset.tip = favored ? '즐겨찾기 해제' : '즐겨찾기';
   };
   updateFavVisual(favorites.some((f) => f.method === call.method && f.url === call.url));
 
