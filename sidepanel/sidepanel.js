@@ -78,7 +78,6 @@ function buildExportEndpoint(base, cached) {
   if (cached) {
     if (cached.lastStatus != null) out.lastStatus = cached.lastStatus;
     if (cached.lastDurationMs != null) out.lastDurationMs = cached.lastDurationMs;
-    if (cached.hitCount != null) out.hitCount = cached.hitCount;
     if (cached.lastVerdict) out.lastVerdict = cached.lastVerdict;
     if (cached.lastVerdictMs != null) out.lastVerdictMs = cached.lastVerdictMs;
   }
