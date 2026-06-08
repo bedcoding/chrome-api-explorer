@@ -81,7 +81,7 @@ URL 직접 추가                            [★ 추가]
 
 추리는 기준:
 - ✅ 모니터링 가능 (비로그인 200)
-- 여러 페이지에서 호출됨 (`pages` 다수, `hitCount` 높음) → 핵심 경로
+- 여러 페이지에서 호출됨 (`pages.length` 다수, UI에 `N회`로 표시) → 핵심 경로
 - 응답시간 빠름 (모니터링 부하 적음)
 
 ### 5. 대표 URL 직접 추가 (옵션)
@@ -205,8 +205,34 @@ shared/
       "method": "GET",
       "url": "https://api.example.com/v2/foo",
       "note": "홈 메인 데이터",
-      "pages": ["/", "/ranking"]
+      "pages": ["/", "/ranking"],
+      "lastStatus": 200,
+      "lastDurationMs": 142,
+      "hitCount": 3,
+      "lastVerdict": "monitorable",
+      "lastVerdictMs": 168
     }
   ]
 }
 ```
+
+**필드 설명:**
+
+| 필드 | 의미 | 비고 |
+|---|---|---|
+| `method` | HTTP 메서드 | 항상 `"GET"` (이 확장은 GET만 캡쳐) |
+| `url` | 요청 URL | 쿼리 스트링 포함 |
+| `note` | 사용자가 직접 적은 메모 | 비어있을 수 있음 |
+| `pages` | 이 API가 호출된 페이지 경로 목록 | 여러 페이지에서 호출되면 길어짐 = 공통 API |
+| `lastStatus` | 마지막 자연 호출의 HTTP 상태코드 | 200=정상, 304=캐시, 401/403=인증, 5xx=서버 오류 |
+| `lastDurationMs` | 마지막 자연 호출의 응답시간(ms) | 웹페이지가 호출했을 때의 시간 |
+| `hitCount` | 누적 호출 횟수 | 같은 페이지 내 새로고침/내부 동작 포함. UI에는 표시하지 않음 |
+| `lastVerdict` | "검증" 버튼으로 헤더/쿠키 없이 재호출한 결과 | `monitorable`(200, 무인증 OK) / `authRequired`(401·403) / `error`(네트워크 실패) / `other`(그 외 상태) |
+| `lastVerdictMs` | "검증" 호출의 응답시간(ms) | **모니터링 등록 시 부하 판단 기준** — 너무 크면 헬스체크에서 제외 권장 |
+
+`lastStatus` ~ `lastVerdictMs` 다섯 필드는 데이터가 있을 때만 포함됩니다. 직접 추가한 URL이나 검증 미실행 항목에선 빠질 수 있습니다.
+
+**모니터링 후보 판단 가이드:**
+- `lastVerdict === "monitorable"` 이어야 무인증 헬스체크 가능
+- `lastVerdictMs` 가 1000ms 이상이면 헬스체크 주기에 부담 → 제외 또는 더 긴 주기
+- `pages.length >= 2` 면 여러 페이지가 의존하는 공통 API → 우선순위 ↑ (UI에서 `N회` 초록색 강조)

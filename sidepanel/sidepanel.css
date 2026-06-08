@@ -192,9 +192,49 @@ main {
   cursor: pointer;
 }
 .group-header[draggable="true"] { cursor: grab; }
-.group-header.dragging { opacity: 0.4; cursor: grabbing; }
-.group-header.drop-above { box-shadow: inset 0 2px 0 0 #6366f1; }
-.group-header.drop-below { box-shadow: inset 0 -2px 0 0 #6366f1; }
+.group-header.dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+  outline: 2px dashed #6366f1;
+  outline-offset: -2px;
+  background: #eef2ff;
+}
+/* drop 대상 헤더는 옅은 보라 배경으로 강조 */
+.group-header.drop-target {
+  background: #eef2ff;
+  transition: background 80ms;
+}
+/* drop 위치에 끼우는 placeholder — 빈 공간이 부드럽게 열림 */
+.drop-placeholder {
+  list-style: none;
+  height: 28px;
+  margin: 2px 0;
+  background: #e0e7ff;
+  border: 2px dashed #6366f1;
+  border-radius: 4px;
+  pointer-events: none;
+  box-sizing: border-box;
+  animation: drop-placeholder-in 120ms ease-out;
+}
+@keyframes drop-placeholder-in {
+  from { height: 0; opacity: 0; margin: 0; }
+  to { height: 28px; opacity: 1; margin: 2px 0; }
+}
+/* 마우스 옆에 떠다니는 ghost 칩 — dragImage용 (화면 밖에 두고 setDragImage로만 사용) */
+.drag-ghost {
+  position: fixed;
+  top: -1000px;
+  left: -1000px;
+  padding: 4px 10px;
+  background: #4f46e5;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
 .group-toggle {
   font-size: 9px;
   width: 10px;

@@ -67,6 +67,24 @@ let pageOrder = {}; // { [origin]: [page, ...] } — 사용자 지정 페이지 
 // 메모/검색 input에 포커스가 있을 때 리렌더가 일어나면 input 노드가 교체돼
 // 포커스가 사라진다. 포커스 중에는 리렌더를 큐잉했다가 blur 시 1회 실행한다.
 let pendingRender = false;
+// Export용 endpoint 객체 생성. 즐겨찾기 정보를 base로, 캡쳐된 metadata(timing/상태/검증)와 머지.
+function buildExportEndpoint(base, cached) {
+  const out = {
+    method: base.method,
+    url: base.url,
+    note: base.note || cached?.note || '',
+    pages: base.pages || cached?.pages || [],
+  };
+  if (cached) {
+    if (cached.lastStatus != null) out.lastStatus = cached.lastStatus;
+    if (cached.lastDurationMs != null) out.lastDurationMs = cached.lastDurationMs;
+    if (cached.hitCount != null) out.hitCount = cached.hitCount;
+    if (cached.lastVerdict) out.lastVerdict = cached.lastVerdict;
+    if (cached.lastVerdictMs != null) out.lastVerdictMs = cached.lastVerdictMs;
+  }
+  return out;
+}
+
 // 백업 데이터 병합. 객체형 key(captures_v1, customUrls_v1, pageNotes_v1)는 깊은 머지,
 // 배열형(favorites_v1, allowDomains_v1)은 중복 제거 후 합치기, 그 외는 incoming 우선.
 function mergeBackup(current, incoming) {
@@ -159,6 +177,9 @@ async function syncActiveTab() {
 }
 
 function bindEvents() {
+  // 그룹 드래그 — 리스트 컨테이너에 위임해서 헤더 사이 사각지대 없도록
+  setupListDragDelegation();
+
   // 모든 보호 대상 input의 blur 시점에 보류된 리렌더 처리
   els.filterInput.addEventListener('blur', flushPendingRender);
   els.whitelistInput.addEventListener('blur', flushPendingRender);
@@ -211,12 +232,12 @@ function bindEvents() {
       alert('즐겨찾기가 비어있습니다.\nGET 배지(☆)를 클릭해 추가하거나 "전체"로 내보내세요.');
       return;
     }
-    const endpoints = favorites.map((f) => ({
-      method: f.method,
-      url: f.url,
-      note: f.note || '',
-      pages: f.pages || [],
-    }));
+    // 캡쳐된 metadata와 머지해서 timing/상태/검증 결과 포함
+    const callsByKey = new Map(currentCalls.map((c) => [`${c.method} ${c.url}`, c]));
+    const endpoints = favorites.map((f) => {
+      const cached = callsByKey.get(`${f.method} ${f.url}`);
+      return buildExportEndpoint(f, cached);
+    });
     openExportModal('★ 즐겨찾기 Export', endpoints, 'api-explorer-favorites');
   });
 
@@ -263,12 +284,7 @@ function bindEvents() {
       alert('현재 선택된 도메인에 캡쳐된 API가 없습니다.');
       return;
     }
-    const endpoints = currentCalls.map((c) => ({
-      method: c.method,
-      url: c.url,
-      note: c.note || '',
-      pages: c.pages || [],
-    }));
+    const endpoints = currentCalls.map((c) => buildExportEndpoint(c, c));
     const prefix = `api-explorer-all-${hostnameOf(selectedOrigin) || 'unknown'}`;
     openExportModal(`전체 Export — ${hostnameOf(selectedOrigin) || ''}`, endpoints, prefix);
   });
@@ -436,6 +452,7 @@ function startWatchers() {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     if ('captures_v1' in changes) {
+      const prevAll = allCaptures;
       allCaptures = changes.captures_v1.newValue ?? {};
       // 자기가 일으킨 메모 저장은 본 패널에 영향 없으니 리렌더 스킵
       if (suppressNextCapturesChange) {
@@ -443,7 +460,11 @@ function startWatchers() {
       } else {
         populateOriginSelect();
         pickCurrentCalls();
-        renderCurrent();
+        // 새 URL이 들어왔으면 메모 입력 가드 무시하고 강제 렌더 (그렇지 않으면 보류된 채 안 풀리는 케이스 있음)
+        const prevCount = countCalls(prevAll);
+        const nextCount = countCalls(allCaptures);
+        if (nextCount > prevCount) renderCurrentNow();
+        else renderCurrent();
         updateCounter();
       }
     }
@@ -527,10 +548,15 @@ async function refreshCustomUrls() {
   customUrls = selectedOrigin ? await getCustomUrlsByOrigin(selectedOrigin) : [];
 }
 
+function countCalls(captures) {
+  let total = 0;
+  for (const o of Object.values(captures ?? {})) total += Object.keys(o).length;
+  return total;
+}
+
 function updateCounter() {
   const totalOrigins = Object.keys(allCaptures).length;
-  let totalCalls = 0;
-  for (const o of Object.values(allCaptures)) totalCalls += Object.keys(o).length;
+  const totalCalls = countCalls(allCaptures);
   els.counter.textContent = `${totalOrigins} 도메인 · ${totalCalls} API`;
 }
 
@@ -630,49 +656,128 @@ function renderRows(calls, favoritesOnly = false) {
 
 // 드래그 중인 페이지 그룹 추적
 let draggingPage = null;
+let dragGhostEl = null;
+let dropPlaceholderEl = null;
+let dropPlaceholderAbove = false; // placeholder가 현재 헤더의 위에 있는지
+
+function clearDropPlaceholder() {
+  if (dropPlaceholderEl) {
+    dropPlaceholderEl.remove();
+    dropPlaceholderEl = null;
+  }
+  document.querySelectorAll('.group-header.drop-target')
+    .forEach((el) => el.classList.remove('drop-target'));
+}
 
 function attachGroupDragHandlers(header, page) {
+  // 헤더별로는 dragstart/dragend만 — dragover/drop은 리스트 컨테이너에 위임 (사각지대 방지)
   header.addEventListener('dragstart', (e) => {
     draggingPage = page;
     header.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', page); // Firefox 호환
+    // 마우스 옆에 떠다니는 칩 — 잡은 그룹 라벨을 명확히 보이게
+    dragGhostEl = document.createElement('div');
+    dragGhostEl.className = 'drag-ghost';
+    dragGhostEl.textContent = page;
+    document.body.appendChild(dragGhostEl);
+    e.dataTransfer.setDragImage(dragGhostEl, 12, 12);
   });
   header.addEventListener('dragend', () => {
     draggingPage = null;
     header.classList.remove('dragging');
-    document.querySelectorAll('.group-header.drop-above, .group-header.drop-below')
-      .forEach((el) => el.classList.remove('drop-above', 'drop-below'));
+    clearDropPlaceholder();
+    if (dragGhostEl) {
+      dragGhostEl.remove();
+      dragGhostEl = null;
+    }
     // 드래그 직후 따라오는 click 이벤트가 토글을 trigger하지 않도록 잠깐 무시
     header.dataset.dragJustEnded = '1';
     setTimeout(() => { delete header.dataset.dragJustEnded; }, 50);
   });
-  header.addEventListener('dragover', (e) => {
-    if (!draggingPage || draggingPage === page) return;
+}
+
+// 그룹 영역의 끝 다음 노드 = 다음 group-header, 또는 리스트 끝(null).
+// insertBefore의 두번째 인자로 그대로 쓸 수 있게 설계.
+function findGroupEndAnchor(header) {
+  let n = header.nextSibling;
+  while (n && !(n.classList && n.classList.contains('group-header'))) {
+    n = n.nextSibling;
+  }
+  return n; // 다음 그룹 헤더 또는 null
+}
+
+// 마우스 Y좌표에 가장 가까운 드롭 가능 그룹 헤더 + 위/아래 판정
+function findDropTarget(clientY) {
+  const headers = [...els.capturedList.querySelectorAll('li.group-header')]
+    .filter((h) => {
+      const p = h.dataset.page;
+      return p && p !== '(페이지 불명)' && p !== '(직접 추가)' && p !== draggingPage;
+    });
+  if (headers.length === 0) return null;
+  // 가장 위 헤더보다 위에 있으면 그 헤더의 above
+  const firstRect = headers[0].getBoundingClientRect();
+  if (clientY < firstRect.top + firstRect.height / 2) {
+    return { header: headers[0], above: true };
+  }
+  // 가장 아래 헤더보다 아래에 있으면 그 헤더의 below
+  const lastRect = headers[headers.length - 1].getBoundingClientRect();
+  if (clientY >= lastRect.top + lastRect.height / 2) {
+    return { header: headers[headers.length - 1], above: false };
+  }
+  // 중간: 각 헤더 중심선 기준 가장 가까운 것
+  let best = headers[0];
+  let bestDist = Infinity;
+  for (const h of headers) {
+    const r = h.getBoundingClientRect();
+    const mid = r.top + r.height / 2;
+    const d = Math.abs(clientY - mid);
+    if (d < bestDist) { bestDist = d; best = h; }
+  }
+  const rect = best.getBoundingClientRect();
+  return { header: best, above: clientY < rect.top + rect.height / 2 };
+}
+
+function setupListDragDelegation() {
+  els.capturedList.addEventListener('dragover', (e) => {
+    if (!draggingPage) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    const rect = header.getBoundingClientRect();
-    const above = e.clientY < rect.top + rect.height / 2;
-    header.classList.toggle('drop-above', above);
-    header.classList.toggle('drop-below', !above);
+    const target = findDropTarget(e.clientY);
+    if (!target) return;
+    const targetPage = target.header.dataset.page;
+    // 이미 같은 위치면 재삽입 안 함 (애니메이션 깜빡임 방지)
+    if (dropPlaceholderEl &&
+        dropPlaceholderEl.dataset.targetPage === targetPage &&
+        dropPlaceholderAbove === target.above) {
+      return;
+    }
+    clearDropPlaceholder();
+    dropPlaceholderEl = document.createElement('li');
+    dropPlaceholderEl.className = 'drop-placeholder';
+    dropPlaceholderEl.dataset.targetPage = targetPage;
+    dropPlaceholderAbove = target.above;
+    target.header.classList.add('drop-target');
+    // placeholder는 항상 "그룹 사이"에 위치하도록 — 헤더와 안 겹치게 그룹 영역 끝/시작에 둠
+    const insertBefore = target.above
+      ? target.header                            // above: target 그룹 시작 직전 (= 이전 그룹 마지막 행 뒤)
+      : findGroupEndAnchor(target.header);       // below: target 그룹 마지막 노드 뒤 (= 다음 헤더 직전, 또는 끝)
+    target.header.parentNode.insertBefore(dropPlaceholderEl, insertBefore);
   });
-  header.addEventListener('dragleave', () => {
-    header.classList.remove('drop-above', 'drop-below');
-  });
-  header.addEventListener('drop', async (e) => {
+  els.capturedList.addEventListener('drop', async (e) => {
+    if (!draggingPage) return;
     e.preventDefault();
     const src = draggingPage;
-    header.classList.remove('drop-above', 'drop-below');
-    if (!src || src === page) return;
-    // 현재 그려진 그룹 헤더들의 페이지 목록을 화면 순서대로 수집
+    const target = findDropTarget(e.clientY);
+    clearDropPlaceholder();
+    if (!target || target.header.dataset.page === src) return;
+    const targetPage = target.header.dataset.page;
     const currentOrder = [...els.capturedList.querySelectorAll('li.group-header')]
       .map((h) => h.dataset.page)
       .filter((p) => p && p !== '(페이지 불명)' && p !== '(직접 추가)');
     const without = currentOrder.filter((p) => p !== src);
-    const targetIdx = without.indexOf(page);
-    const rect = header.getBoundingClientRect();
-    const above = e.clientY < rect.top + rect.height / 2;
-    const insertAt = above ? targetIdx : targetIdx + 1;
+    const targetIdx = without.indexOf(targetPage);
+    const insertAt = target.above ? targetIdx : targetIdx + 1;
     without.splice(insertAt, 0, src);
     pageOrder[selectedOrigin] = without;
     await chrome.storage.local.set({ [PAGE_ORDER_KEY]: pageOrder });
@@ -809,12 +914,15 @@ function appendCallRow(call) {
     chrome.tabs.create({ url: call.url });
   });
   const metaEl = li.querySelector('.meta');
-  const metaParts = [`${call.lastDurationMs ?? 0}ms`];
-  metaParts.push(`${call.hitCount ?? 1}회`);
-  // 여러 페이지에서 호출되는 API는 페이지 수 표시 (1개 또는 없으면 생략)
+  // N회 = 이 API가 호출된 서로 다른 페이지 수. 단일 페이지면 의미 없어서 생략.
   const pageCount = Array.isArray(call.pages) ? call.pages.length : 0;
-  if (pageCount >= 2) metaParts.push(`${pageCount}페이지`);
-  metaEl.textContent = metaParts.join('·');
+  const renderMeta = () => {
+    // 자연 호출 시간 옆에 회수 같이. verdict 모드에선 meta 비우고 verdict가 ms·회 합쳐 표시.
+    const parts = [`${call.lastDurationMs ?? 0}ms`];
+    if (pageCount >= 2) parts.push(`${pageCount}회`);
+    metaEl.textContent = parts.join('·');
+  };
+  renderMeta();
   if (pageCount >= 2) metaEl.classList.add('multi-page');
 
   const verdictEl = li.querySelector('.verdict');
@@ -826,15 +934,15 @@ function appendCallRow(call) {
     if (verdict === 'monitorable') replayBtn.classList.add('v-monitorable');
     else if (verdict === 'authRequired') replayBtn.classList.add('v-authRequired');
     else if (verdict === 'error') replayBtn.classList.add('v-error');
-    // 메타 자리에 결과 표시
+    // 메타 자리에 결과 표시 — ms·회는 verdict로 대체. 페이지 수는 verdict 텍스트에 합쳐서 위치 유지.
     if (verdict) {
-      const text = verdict === 'monitorable' ? `✅ ${durationMs}ms`
+      const base = verdict === 'monitorable' ? `✅ ${durationMs}ms`
         : verdict === 'authRequired' ? '🔒 인증'
         : verdict === 'error' ? '⚠️ 에러'
         : `❔ ${durationMs}ms`;
-      verdictEl.textContent = text;
+      verdictEl.textContent = pageCount >= 2 ? `${base}·${pageCount}회` : base;
       verdictEl.className = `verdict ${verdict}`;
-      metaEl.style.display = 'none';
+      metaEl.textContent = '';
     }
   };
   // 이전 검증 결과가 있으면 처음부터 적용
@@ -844,7 +952,7 @@ function appendCallRow(call) {
     replayBtn.disabled = true;
     verdictEl.textContent = '검증중…';
     verdictEl.className = 'verdict';
-    metaEl.style.display = 'none';
+    metaEl.textContent = '';
     const res = await chrome.runtime.sendMessage({ type: 'replayNaked', url: call.url });
     replayBtn.disabled = false;
     const verdict = (!res || res.verdict === 'error') ? 'error' : res.verdict;
