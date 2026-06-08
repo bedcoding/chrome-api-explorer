@@ -50,6 +50,7 @@ let selectedOrigin = '';       // dropdown에서 선택된 origin
 let allCaptures = {};          // {origin: {key: Call}}
 let currentCalls = [];         // selectedOrigin에 해당하는 Call[]
 let customUrls = [];           // selectedOrigin에 해당하는 사용자 직접 추가 URL
+let allCustomOriginsCache = []; // 모든 customUrls origin 키 (origin select 표시용)
 let favorites = [];
 let favOnly = false;
 let currentFilter = '';
@@ -475,6 +476,10 @@ function startWatchers() {
       refreshWhitelistView();
     }
     if ('customUrls_v1' in changes) {
+      // 직접 추가만 된 origin도 select에 나타나야 하므로 캐시 갱신 + select 다시 채움
+      const newAll = changes.customUrls_v1.newValue ?? {};
+      allCustomOriginsCache = Object.keys(newAll);
+      populateOriginSelect();
       if (suppressNextCustomUrlsChange) {
         suppressNextCustomUrlsChange = false;
         // customUrls 캐시는 갱신해야 함 (다음 렌더 시 일관성)
@@ -494,6 +499,7 @@ async function reloadCustomUrlsAndRender() {
 async function reloadCaptures() {
   const res = await chrome.runtime.sendMessage({ type: 'getAllCaptures' });
   allCaptures = res?.all ?? {};
+  await refreshAllCustomOrigins();
   populateOriginSelect();
   pickCurrentCalls();
   await refreshCustomUrls();
@@ -501,8 +507,15 @@ async function reloadCaptures() {
   updateCounter();
 }
 
+async function refreshAllCustomOrigins() {
+  const all = await loadAllCustomUrls();
+  allCustomOriginsCache = Object.keys(all);
+}
+
 function populateOriginSelect() {
-  const origins = Object.keys(allCaptures).sort();
+  // 캡쳐된 origin + 직접 추가된 origin 합쳐 표시 — 캡쳐 없이 직접 추가만 된 도메인도 선택 가능하게
+  const originSet = new Set([...Object.keys(allCaptures), ...allCustomOriginsCache]);
+  const origins = [...originSet].sort();
   const prev = selectedOrigin;
   els.originSelect.innerHTML = '';
 
@@ -519,10 +532,10 @@ function populateOriginSelect() {
   }
 
   for (const ori of origins) {
-    const count = Object.keys(allCaptures[ori]).length;
+    const captureCount = allCaptures[ori] ? Object.keys(allCaptures[ori]).length : 0;
     const opt = document.createElement('option');
     opt.value = ori;
-    opt.textContent = `${ori}  (${count})`;
+    opt.textContent = captureCount > 0 ? `${ori}  (${captureCount})` : `${ori}  (직접 추가)`;
     els.originSelect.appendChild(opt);
   }
 
@@ -580,13 +593,16 @@ function renderCurrentNow() {
     method: c.method,
     url: c.url,
     pages: [],
-    lastStatus: null,
+    lastStatus: c.lastStatus ?? null,
     lastDurationMs: 0,
     lastSizeBytes: 0,
     hitCount: 0,
     note: c.note || '',
     addedAt: c.addedAt ?? 0,
     isCustom: true,
+    // 검증 결과는 customUrls 저장소에 영속 — 다른 항목 변경으로 리렌더돼도 살아남도록 끌어옴
+    lastVerdict: c.lastVerdict,
+    lastVerdictMs: c.lastVerdictMs,
   }));
   // 추가된 순서대로 위→아래로 쌓이도록 정렬 (오래된 것이 위, 최신이 아래).
   // 캡쳐는 firstSeenAt, 직접 추가는 addedAt(없으면 0) 기준.
@@ -961,8 +977,17 @@ function appendCallRow(call) {
     replayBtn.disabled = false;
     const verdict = (!res || res.verdict === 'error') ? 'error' : res.verdict;
     const durationMs = res?.durationMs ?? 0;
+    const status = res?.status;
     applyVerdictVisual(verdict, durationMs);
     if (verdict === 'error') verdictEl.title = res?.message ?? 'unknown';
+    // 직접 추가 행은 자연 호출 lastStatus가 비어있으니 검증 status로 배지 즉시 갱신
+    if (call.isCustom && typeof status === 'number') {
+      statusEl.textContent = status;
+      statusEl.classList.remove('ok', 'auth', 'err');
+      if (status >= 200 && status < 300) statusEl.classList.add('ok');
+      else if (status === 401 || status === 403) statusEl.classList.add('auth');
+      else statusEl.classList.add('err');
+    }
     // 영속 저장 — 캡쳐된 행에만 의미 있음
     if (selectedOrigin) {
       chrome.runtime.sendMessage({
@@ -972,6 +997,7 @@ function appendCallRow(call) {
         url: call.url,
         verdict,
         durationMs,
+        status,
       });
     }
   });
@@ -1136,15 +1162,16 @@ async function addCustomFavorite() {
     alert('URL은 http:// 또는 https:// 로 시작해야 합니다.');
     return;
   }
-  if (!selectedOrigin) {
-    alert('먼저 위 도메인 드롭다운에서 추가할 도메인을 선택하세요.');
-    return;
+  // 입력 URL의 origin을 그대로 키로 사용 — 캡쳐된 적 없는 도메인이어도 새 그룹으로 자동 생성됨
+  const targetOrigin = parsed.origin;
+  // 현재 보고있는 도메인과 다르면 의도 확인 (실수 방지)
+  if (selectedOrigin && targetOrigin !== selectedOrigin) {
+    const ok = confirm(`이 URL의 도메인은 ${targetOrigin} 입니다.\n현재 선택된 ${selectedOrigin}와 다른 새 도메인 그룹으로 추가됩니다.\n계속할까요?`);
+    if (!ok) return;
   }
-  if (parsed.origin !== selectedOrigin) {
-    alert(`이 URL의 도메인(${parsed.origin})이 현재 선택된 도메인(${selectedOrigin})과 다릅니다.\n같은 도메인의 URL만 추가할 수 있습니다.`);
-    return;
-  }
-  if (customUrls.some((c) => c.url === url)) {
+  // customUrls는 origin별로 묶이므로 같은 origin 내 중복만 검사
+  const sameOriginCustom = await getCustomUrlsByOrigin(targetOrigin);
+  if (sameOriginCustom.some((c) => c.url === url)) {
     alert('이미 추가된 URL입니다.');
     return;
   }
@@ -1160,7 +1187,11 @@ async function addCustomFavorite() {
   }
   els.favAddBtn.disabled = true;
   try {
-    await addCustomUrl(selectedOrigin, url);
+    await addCustomUrl(targetOrigin, url);
+    // 새 origin이라 origin select에 없을 수 있음 — 그쪽으로 점프해 사용자가 결과 바로 확인하도록
+    if (targetOrigin !== selectedOrigin) {
+      selectedOrigin = targetOrigin;
+    }
     els.favAddUrl.value = '';
     await refreshCustomUrls();
     renderCurrent();

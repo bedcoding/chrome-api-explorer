@@ -15,6 +15,7 @@ import {
   pathOf,
 } from '../shared/settings.js';
 import { recordCall, getCapturesByOrigin, getAllCaptures, clearOrigin, clearAll, updateCallNote, updateCallVerdict, removeCall, removePageFromOrigin } from '../shared/captures.js';
+import { updateCustomUrlVerdict } from '../shared/custom-urls.js';
 
 // 아이콘 클릭 → 사이드패널 열기
 chrome.sidePanel
@@ -179,7 +180,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return;
         }
         case 'updateVerdict': {
+          // 캡쳐된 URL이면 captures에, 직접 추가한 URL이면 customUrls에 저장.
+          // 같은 URL이 양쪽에 있을 일은 없음(sidepanel에서 중복 추가 차단).
           await updateCallVerdict(msg.origin, msg.method, msg.url, msg.verdict, msg.durationMs);
+          await updateCustomUrlVerdict(msg.origin, msg.url, msg.verdict, msg.durationMs, msg.status);
           sendResponse({ ok: true });
           return;
         }

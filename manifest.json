@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "API Explorer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "현재 페이지에서 호출되는 GET API를 자동으로 감지하고, 모니터링할 API 목록으로 모아 정리합니다.",
   "minimum_chrome_version": "120",
   "icons": {
