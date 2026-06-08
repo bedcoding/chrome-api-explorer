@@ -4,3 +4,6 @@ dist
 .DS_Store
 .vite
 .claude
+
+# 웹스토어 배포용 패키지 (수시로 재생성)
+*.zip
