@@ -802,6 +802,11 @@ function renderGrouped(calls) {
   const savedOrder = pageOrder[selectedOrigin] || [];
   const orderedPages = [];
   const seen = new Set();
+  // (직접 추가)는 항상 최상단 — 사용자가 의도적으로 등록한 모니터링 후보
+  if (groups.has('(직접 추가)')) {
+    orderedPages.push('(직접 추가)');
+    seen.add('(직접 추가)');
+  }
   for (const p of savedOrder) {
     if (groups.has(p) && !seen.has(p)) { orderedPages.push(p); seen.add(p); }
   }
@@ -1141,6 +1146,16 @@ async function addCustomFavorite() {
   }
   if (customUrls.some((c) => c.url === url)) {
     alert('이미 추가된 URL입니다.');
+    return;
+  }
+  // 캡쳐에 이미 있는 URL은 차단 — 같은 URL을 두 행으로 표시하면 검증 결과/메모가 따로 놀아 혼란
+  const existing = currentCalls.find((c) => c.url === url);
+  if (existing) {
+    const pagesArr = Array.isArray(existing.pages) ? existing.pages.filter(Boolean) : [];
+    const where = pagesArr.length > 0
+      ? pagesArr.slice(0, 5).join(', ') + (pagesArr.length > 5 ? ` 외 ${pagesArr.length - 5}개` : '')
+      : '(페이지 불명)';
+    alert(`이미 자동 감지된 URL입니다.\n호출된 페이지: ${where}`);
     return;
   }
   els.favAddBtn.disabled = true;

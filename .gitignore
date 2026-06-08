@@ -7,3 +7,6 @@ dist
 
 # 웹스토어 배포용 패키지 (수시로 재생성)
 *.zip
+
+# Export/백업 JSON (확장이 다운로드한 사용자 데이터)
+api-explorer-*.json
