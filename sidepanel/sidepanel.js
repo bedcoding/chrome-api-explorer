@@ -12,6 +12,12 @@ const els = {
   exportBtn: document.getElementById('exportBtn'),
   exportFavBtn: document.getElementById('exportFavBtn'),
   exportAllBtn: document.getElementById('exportAllBtn'),
+  exportBackupBtn: document.getElementById('exportBackupBtn'),
+  importMenu: document.getElementById('importMenu'),
+  importBtn: document.getElementById('importBtn'),
+  importOverwriteBtn: document.getElementById('importOverwriteBtn'),
+  importMergeBtn: document.getElementById('importMergeBtn'),
+  importFileInput: document.getElementById('importFileInput'),
   notesMenu: document.getElementById('notesMenu'),
   notesBtn: document.getElementById('notesBtn'),
   notesExpandFilledBtn: document.getElementById('notesExpandFilledBtn'),
@@ -59,6 +65,39 @@ let collapsedGroups = {}; // 현재 origin의 접힌 페이지 Set
 // 메모/검색 input에 포커스가 있을 때 리렌더가 일어나면 input 노드가 교체돼
 // 포커스가 사라진다. 포커스 중에는 리렌더를 큐잉했다가 blur 시 1회 실행한다.
 let pendingRender = false;
+// 백업 데이터 병합. 객체형 key(captures_v1, customUrls_v1, pageNotes_v1)는 깊은 머지,
+// 배열형(favorites_v1, allowDomains_v1)은 중복 제거 후 합치기, 그 외는 incoming 우선.
+function mergeBackup(current, incoming) {
+  const out = { ...current };
+  for (const [key, val] of Object.entries(incoming)) {
+    const cur = current[key];
+    if (Array.isArray(val) && Array.isArray(cur)) {
+      const seen = new Set();
+      const dedupKey = (item) => typeof item === 'object'
+        ? `${item.method ?? ''}|${item.url ?? item}` : String(item);
+      out[key] = [...cur, ...val].filter((item) => {
+        const k = dedupKey(item);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    } else if (val && typeof val === 'object' && cur && typeof cur === 'object' && !Array.isArray(val)) {
+      // 객체형: 1단계 깊은 머지 (captures_v1의 origin → method+url 등)
+      out[key] = { ...cur };
+      for (const [k2, v2] of Object.entries(val)) {
+        if (v2 && typeof v2 === 'object' && !Array.isArray(v2) && cur[k2] && typeof cur[k2] === 'object') {
+          out[key][k2] = { ...cur[k2], ...v2 };
+        } else {
+          out[key][k2] = v2;
+        }
+      }
+    } else {
+      out[key] = val;
+    }
+  }
+  return out;
+}
+
 function isTypingInEditableInput() {
   const a = document.activeElement;
   if (!a) return false;
@@ -146,16 +185,20 @@ function bindEvents() {
     }, 400);
   });
 
-  // Export/메모 드롭업: 트리거 클릭으로 토글, 메뉴 바깥 클릭으로 닫기.
-  // 두 메뉴 중 하나를 열면 다른 하나는 닫는다.
+  // 푸터 드롭업 3종(내보내기/불러오기/메모): 트리거 클릭으로 토글, 다른 메뉴는 자동으로 닫힘.
+  const footerMenus = [els.exportMenu, els.importMenu, els.notesMenu];
+  const openMenu = (target) => {
+    for (const m of footerMenus) if (m !== target) m.classList.remove('open');
+    target.classList.toggle('open');
+  };
   els.exportBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    els.notesMenu.classList.remove('open');
-    els.exportMenu.classList.toggle('open');
+    openMenu(els.exportMenu);
   });
   document.addEventListener('click', (e) => {
-    if (!els.exportMenu.contains(e.target)) els.exportMenu.classList.remove('open');
-    if (els.notesMenu && !els.notesMenu.contains(e.target)) els.notesMenu.classList.remove('open');
+    for (const m of footerMenus) {
+      if (m && !m.contains(e.target)) m.classList.remove('open');
+    }
   });
 
   els.exportFavBtn.addEventListener('click', () => {
@@ -173,11 +216,15 @@ function bindEvents() {
     openExportModal('★ 즐겨찾기 Export', endpoints, 'api-explorer-favorites');
   });
 
-  // 메모 드롭업 트리거 (Export와 같은 패턴, 하나 열면 다른 하나 닫음)
+  // 메모 드롭업 트리거
   els.notesBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    els.exportMenu.classList.remove('open');
-    els.notesMenu.classList.toggle('open');
+    openMenu(els.notesMenu);
+  });
+  // 불러오기 드롭업 트리거
+  els.importBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openMenu(els.importMenu);
   });
 
   const forEachRow = (fn) => {
@@ -220,6 +267,77 @@ function bindEvents() {
     }));
     const prefix = `api-explorer-all-${hostnameOf(selectedOrigin) || 'unknown'}`;
     openExportModal(`전체 Export — ${hostnameOf(selectedOrigin) || ''}`, endpoints, prefix);
+  });
+
+  // 전체 백업: 모든 storage.local 데이터를 JSON 파일로 다운로드
+  els.exportBackupBtn.addEventListener('click', async () => {
+    els.exportMenu.classList.remove('open');
+    const all = await chrome.storage.local.get(null);
+    const payload = {
+      _format: 'api-explorer-backup',
+      _version: 1,
+      _exportedAt: new Date().toISOString(),
+      data: all,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `api-explorer-backup-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  // 불러오기: 덮어쓰기 / 병합
+  let importMode = null; // 'overwrite' | 'merge'
+  els.importOverwriteBtn.addEventListener('click', () => {
+    els.importMenu.classList.remove('open');
+    if (!confirm('현재 저장된 모든 데이터를 백업 파일 내용으로 덮어씁니다.\n계속할까요?')) return;
+    importMode = 'overwrite';
+    els.importFileInput.click();
+  });
+  els.importMergeBtn.addEventListener('click', () => {
+    els.importMenu.classList.remove('open');
+    importMode = 'merge';
+    els.importFileInput.click();
+  });
+  els.importFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 같은 파일 다시 선택할 수 있도록 reset
+    if (!file || !importMode) return;
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      if (payload._format !== 'api-explorer-backup' || !payload.data) {
+        alert('백업 파일 형식이 올바르지 않습니다.');
+        return;
+      }
+      const incoming = payload.data;
+      if (importMode === 'overwrite') {
+        await chrome.storage.local.clear();
+        await chrome.storage.local.set(incoming);
+        alert('덮어쓰기 완료. 사이드패널을 새로 열면 반영됩니다.');
+      } else {
+        // 병합: 객체형 key는 깊은 머지(같은 origin/key는 incoming 우선), 배열형은 dedupe로 합침
+        const current = await chrome.storage.local.get(null);
+        const merged = mergeBackup(current, incoming);
+        await chrome.storage.local.set(merged);
+        alert('병합 완료. 사이드패널을 새로 열면 반영됩니다.');
+      }
+      // 자체 리로드
+      await reloadCaptures();
+      favorites = await loadFavorites();
+      await refreshWhitelistView();
+      renderCurrent();
+    } catch (err) {
+      console.error(err);
+      alert(`복원 실패: ${err?.message ?? err}`);
+    } finally {
+      importMode = null;
+    }
   });
 
   els.favAddBtn.addEventListener('click', addCustomFavorite);

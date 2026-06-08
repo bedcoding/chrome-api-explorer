@@ -50,20 +50,29 @@
 
   <footer>
     <div id="exportMenu" class="export-menu">
-      <button id="exportBtn" class="export-trigger">Export ▾</button>
+      <button id="exportBtn" class="export-trigger">내보내기 ▾</button>
       <div class="export-popup" role="menu">
-        <button id="exportFavBtn" class="export-item" role="menuitem">★ 즐겨찾기만</button>
-        <button id="exportAllBtn" class="export-item" role="menuitem">⋯ 전체</button>
+        <button id="exportBackupBtn" class="export-item" role="menuitem">💾 전체 백업</button>
+        <button id="exportFavBtn" class="export-item" role="menuitem">★ 즐겨찾기 목록</button>
+        <button id="exportAllBtn" class="export-item" role="menuitem">⋯ 현재 도메인 목록</button>
+      </div>
+    </div>
+    <div id="importMenu" class="export-menu">
+      <button id="importBtn" class="export-trigger">불러오기 ▾</button>
+      <div class="export-popup" role="menu">
+        <button id="importMergeBtn" class="export-item" role="menuitem">🔀 병합</button>
+        <button id="importOverwriteBtn" class="export-item" role="menuitem">📥 덮어쓰기</button>
       </div>
     </div>
     <div id="notesMenu" class="export-menu">
       <button id="notesBtn" class="export-trigger">메모 ▾</button>
       <div class="export-popup" role="menu">
-        <button id="notesExpandFilledBtn" class="export-item" role="menuitem">이미 있는 것만 펼치기</button>
-        <button id="notesExpandAllBtn" class="export-item" role="menuitem">전부 펼치기</button>
         <button id="notesCollapseAllBtn" class="export-item" role="menuitem">전부 접기</button>
+        <button id="notesExpandAllBtn" class="export-item" role="menuitem">전부 펼치기</button>
+        <button id="notesExpandFilledBtn" class="export-item" role="menuitem">이미 있는 것만 펼치기</button>
       </div>
     </div>
+    <input id="importFileInput" type="file" accept="application/json,.json" hidden>
     <span id="counter" class="counter"></span>
   </footer>
 
